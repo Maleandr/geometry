@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="cs">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geometry Dash Web</title>
+    <!-- Google Fonts for arcade look -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+        <!-- Audio element pro hudbu na pozadí -->
+        <audio id="bgMusic" src="music.mp3" loop preload="auto"></audio>
+
+        <!-- UI Elements Overlay -->
+        <div id="ui-layer">
+            <div id="progress-display"><span id="progress-value">0</span>%</div>
+            <div id="score-display">Score: <span id="score-value">0</span></div>
+            <div id="hi-score-display">High Score: <span id="hi-score-value">0</span></div>
+            <button id="pause-btn" class="icon-btn"></button>
+
+            <div id="start-screen" class="overlay screen active">
+                <p>Klikni myší nebo stiskni Mezerník pro skok<br>Vyhni se bodákům a dostaň se na konec!</p>
+                <div
+                    style="font-size: 24px; margin-bottom: 15px; color: #eab308; font-weight: bold; text-shadow: 0 0 10px rgba(234, 179, 8, 0.5);">
+                    ⭐ <span id="star-count">0</span></div>
+                <button id="color-btn" class="btn" style="margin-bottom: 20px; font-size: 16px; width: 80%;">Barva
+                    postavičky: Zelená</button>
+                <div class="level-select">
+                    <button class="btn level-btn" data-level="1">Level 1 (Easy)</button>
+                    <button class="btn level-btn" data-level="2">Level 2 (Hard)</button>
+                    <button class="btn level-btn" style="background: #7f1d1d; border-color: #fca5a5;"
+                        data-level="3">Level 3 (Demon)</button>
+                </div>
+                <div
+                    style="margin-top: 25px; font-size: 20px; color: #cbd5e1; display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="practice-toggle" style="width: 24px; height: 24px; cursor: pointer;">
+                    <label for="practice-toggle" style="cursor: pointer;">Practice Mode (Z = Uložit, X = Smazat)</label>
+                </div>
+            </div>
+
+            <div id="game-over-screen" class="overlay screen">
+                <h1>Game Over</h1>
+                <div class="stats">
+                    <p>Score: <span id="final-score">0</span></p>
+                    <p>Attempt: <span id="attempt-count">1</span></p>
+                </div>
+                <p id="reward-text"
+                    style="color: #eab308; font-size: 24px; font-weight: bold; text-shadow: 0 0 10px rgba(234, 179, 8, 0.5); display: none; margin-bottom: 15px;">
+                    +1 ⭐ Odměna!</p>
+                <div style="display: flex; gap: 15px;">
+                    <button id="restart-btn" class="btn">Znovu</button>
+                    <button id="gameover-menu-btn" class="btn">Menu</button>
+                </div>
+            </div>
+
+            <div id="pause-screen" class="overlay screen">
+                <h1>Pozastaveno</h1>
+                <button id="resume-btn" class="btn" style="margin-bottom: 15px;">Pokračovat</button>
+                <button id="menu-btn" class="btn">Zpět do menu</button>
+            </div>
+
+            <div id="practice-ui" style="display: none;">
+                <button id="add-cp-btn" class="floating-btn" style="bottom: 20px; right: 150px;">Z - Uložit</button>
+                <button id="rem-cp-btn" class="floating-btn" style="bottom: 20px; right: 20px;">X - Smazat</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
