@@ -22,7 +22,8 @@
             <div id="progress-display"><span id="progress-value">0</span>%</div>
             <div id="score-display">Score: <span id="score-value">0</span></div>
             <div id="hi-score-display">High Score: <span id="hi-score-value">0</span></div>
-            <button id="pause-btn" class="icon-btn"></button>
+            <button id="pause-btn" class="icon-btn" title="Pauza (P)"></button>
+            <button id="restart-hud-btn" class="icon-btn" title="Rychlý restart (Tab)">⟳</button>
 
             <div id="start-screen" class="overlay screen active">
                 <p>Klikni myší nebo stiskni Mezerník pro skok<br>Vyhni se bodákům a dostaň se na konec!</p>
@@ -36,16 +37,29 @@
                     <button class="btn level-btn" data-level="2">Level 2 (Hard)</button>
                     <button class="btn level-btn" style="background: #7f1d1d; border-color: #fca5a5;"
                         data-level="3">Level 3 (Demon)</button>
+                    <button class="btn level-btn" style="background: #4c1d95; border-color: #c4b5fd;"
+                        data-level="4">Level 4 (Insane)</button>
+                    <button class="btn level-btn" style="background: linear-gradient(135deg, #f472b6, #fb923c); border-color: #fde047; text-shadow: 1px 1px 2px #be185d;"
+                        data-level="5">Level 5 (Happy Birthday!)</button>
                 </div>
                 <div
                     style="margin-top: 25px; font-size: 20px; color: #cbd5e1; display: flex; align-items: center; gap: 10px;">
                     <input type="checkbox" id="practice-toggle" style="width: 24px; height: 24px; cursor: pointer;">
                     <label for="practice-toggle" style="cursor: pointer;">Practice Mode (Z = Uložit, X = Smazat)</label>
                 </div>
+                <div
+                    style="margin-top: 15px; font-size: 20px; color: #cbd5e1; display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="pvp-toggle" style="width: 24px; height: 24px; cursor: pointer;">
+                    <label for="pvp-toggle" style="cursor: pointer; color: #60a5fa;">PVP Mód (Hráč 1: Mezerník, Hráč 2: W)</label>
+                </div>
+                <div style="margin-top: 30px;">
+                    <button id="hard-reset-btn" class="btn" style="background: #ef4444; box-shadow: 0 4px 0 #b91c1c, 0 0 15px rgba(239, 68, 68, 0.5); font-size: 14px; padding: 10px 20px;">Vymazat postup (Restart Hry)</button>
+                </div>
             </div>
 
             <div id="game-over-screen" class="overlay screen">
                 <h1>Game Over</h1>
+                <h2 id="pvp-result" style="color: #60a5fa; display: none; margin-bottom: 10px;">Hráč x vyhrál!</h2>
                 <div class="stats">
                     <p>Score: <span id="final-score">0</span></p>
                     <p>Attempt: <span id="attempt-count">1</span></p>
@@ -62,6 +76,7 @@
             <div id="pause-screen" class="overlay screen">
                 <h1>Pozastaveno</h1>
                 <button id="resume-btn" class="btn" style="margin-bottom: 15px;">Pokračovat</button>
+                <button id="pause-restart-btn" class="btn" style="margin-bottom: 15px; background: #eab308; box-shadow: 0 4px 0 #a16207, 0 0 15px rgba(234, 179, 8, 0.5);">Restartovat úroveň</button>
                 <button id="menu-btn" class="btn">Zpět do menu</button>
             </div>
 

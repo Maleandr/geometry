@@ -7,6 +7,7 @@ const GAME_HEIGHT = canvas.height;
 
 let state = {
     current: 'START', // START, PLAYING, GAMEOVER
+    isMobile: false,
     score: 0,
     hiScore: 0,
     attempts: 1,
@@ -22,10 +23,15 @@ let state = {
     isPractice: false,
     lastRespawnTime: 0,
     stars: parseInt(localStorage.getItem('gd_stars')) || 0,
-    beatenLevels: JSON.parse(localStorage.getItem('gd_beaten') || '{}')
+    beatenLevels: JSON.parse(localStorage.getItem('gd_beaten') || '{}'),
+    isPVP: false,
+    isMirrored: false
 };
 
+
+
 let checkpoints = [];
+let confetti = [];
 let globalIsHolding = false;
 let currentColorIndex = parseInt(localStorage.getItem('gd_color')) || 0;
 let unlockedColors = ['#4ade80']; // base color
@@ -33,7 +39,9 @@ let unlockedColors = ['#4ade80']; // base color
 let levelStats = JSON.parse(localStorage.getItem('gd_stats')) || {
     1: { hiScore: 0, attempts: 1 },
     2: { hiScore: 0, attempts: 1 },
-    3: { hiScore: 0, attempts: 1 }
+    3: { hiScore: 0, attempts: 1 },
+    4: { hiScore: 0, attempts: 1 },
+    5: { hiScore: 0, attempts: 1 }
 };
 
 // Physics and Environment
@@ -56,7 +64,26 @@ const player = {
     isHolding: false,
     shipGravity: 0.4,
     shipThrust: 0.6,
-    gravityDir: 1 // 1 for down, -1 for up (BALL mode)
+    gravityDir: 1, // 1 for down, -1 for up (BALL mode)
+    dead: false
+};
+
+const player2 = {
+    x: 100,
+    y: 0,
+    width: 40,
+    height: 40,
+    dy: 0,
+    jumpForce: 10.5,
+    grounded: true,
+    rotation: 0,
+    color: '#3b82f6', // blue
+    mode: 'CUBE', // CUBE, SHIP, BALL
+    isHolding: false,
+    shipGravity: 0.4,
+    shipThrust: 0.6,
+    gravityDir: 1, // 1 for down, -1 for up
+    dead: true // inactive by default until PVP is toggled
 };
 
 // UI Elements
@@ -70,10 +97,13 @@ const startScreen = document.getElementById('start-screen');
 const gameOverScreen = document.getElementById('game-over-screen');
 const pauseScreen = document.getElementById('pause-screen');
 const pauseBtn = document.getElementById('pause-btn');
+const restartHudBtn = document.getElementById('restart-hud-btn');
 const resumeBtn = document.getElementById('resume-btn');
+const pauseRestartBtn = document.getElementById('pause-restart-btn');
 const menuBtn = document.getElementById('menu-btn');
 const restartBtn = document.getElementById('restart-btn');
 const gameoverMenuBtn = document.getElementById('gameover-menu-btn');
+const hardResetBtn = document.getElementById('hard-reset-btn');
 const bgMusic = document.getElementById('bgMusic');
 
 const practiceToggle = document.getElementById('practice-toggle');
@@ -84,6 +114,17 @@ const remCpBtn = document.getElementById('rem-cp-btn');
 const colorBtn = document.getElementById('color-btn');
 const starCountEl = document.getElementById('star-count');
 const rewardTextEl = document.getElementById('reward-text');
+
+const pvpToggle = document.getElementById('pvp-toggle');
+const pvpResultEl = document.getElementById('pvp-result');
+
+state.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in window);
+
+if (state.isMobile) {
+    if (pvpToggle && pvpToggle.parentElement) pvpToggle.parentElement.style.display = 'none';
+    let hint = startScreen.querySelector('p');
+    if (hint) hint.innerHTML = 'Klepni na obrazovku pro skok<br>Vyhni se bodákům a dostaň se na konec!';
+}
 
 // Environment variables
 let obstacles = [];
@@ -106,6 +147,8 @@ const LEVEL_MAP_1 = [
     'PORTAL_SHIP',
     'SHIP_GAP', 'SHIP_GAP', 'PORTAL_GRAV_UP', 'SHIP_GAP', 'SHIP_GAP', 'PORTAL_GRAV_DOWN',
 
+    'PORTAL_MIRROR_ON',
+
     // Transition to BALL
     'PORTAL_BALL',
     'BALL_OBSTACLE', 'BALL_PAD_TRAP', 'BALL_ORB_TRAP', 'BALL_FAKE_ORB_TRAP', 'BALL_PORTAL_TRAP', 'BALL_MIX_TRAP',
@@ -113,6 +156,8 @@ const LEVEL_MAP_1 = [
     // Transition to UFO
     'PORTAL_UFO',
     'UFO_TRAP', 'UFO_TRAP', 'PORTAL_GRAV_UP', 'UFO_TRAP', 'PORTAL_GRAV_DOWN',
+
+    'PORTAL_MIRROR_OFF',
 
     // Transition to WAVE
     'PORTAL_WAVE',
@@ -138,11 +183,11 @@ const LEVEL_MAP_2 = [
 
     // Rapid SHIP section with Orbs and Gravity 
     'PORTAL_SHIP',
-    'SHIP_ORB_TRAP', 'PORTAL_GRAV_UP', 'SHIP_SPIKE_GAP', 'PORTAL_GRAV_DOWN', 'SHIP_ORB_TRAP', 'PORTAL_GRAV_UP', 'SHIP_SPIKE_GAP', 'PORTAL_GRAV_DOWN',
+    'SHIP_ORB_TRAP', 'PORTAL_GRAV_UP', 'PORTAL_MIRROR_ON', 'SHIP_SPIKE_GAP', 'PORTAL_GRAV_DOWN', 'SHIP_ORB_TRAP', 'PORTAL_GRAV_UP', 'SHIP_SPIKE_GAP', 'PORTAL_GRAV_DOWN',
 
     // Brutal BALL traps
     'PORTAL_BALL',
-    'BALL_HARD_ZIGZAG', 'BALL_DBL_ORB_TRAP', 'BALL_MIX_TRAP', 'BALL_FAKE_ORB_TRAP',
+    'BALL_HARD_ZIGZAG', 'PORTAL_MIRROR_ON', 'BALL_DBL_ORB_TRAP', 'PORTAL_MIRROR_OFF', 'BALL_MIX_TRAP', 'BALL_FAKE_ORB_TRAP',
 
     // Double UFO mix 
     'PORTAL_UFO',
@@ -170,7 +215,7 @@ const LEVEL_MAP_3 = [
 
     // UFO
     'PORTAL_UFO',
-    'UFO_TRAP', 'PORTAL_GRAV_UP', 'UFO_TRAP', 'UFO_TRAP', 'PORTAL_GRAV_DOWN',
+    'UFO_TRAP', 'PORTAL_GRAV_UP', 'PORTAL_MIRROR_OFF', 'UFO_PAD_TRAP', 'UFO_TRAP', 'PORTAL_GRAV_DOWN',
 
     // Ship
     'PORTAL_SHIP',
@@ -183,6 +228,43 @@ const LEVEL_MAP_3 = [
     'PORTAL_END'
 ];
 
+const LEVEL_MAP_4 = [
+    // 1. UFO Start
+    'PORTAL_UFO',
+    'UFO_PAD_TRAP', 'UFO_TRAP', 'PORTAL_GRAV_UP', 'UFO_TRAP', 'PORTAL_GRAV_DOWN', 'UFO_TRAP',
+
+    // 2. Mirrored Wave tunel
+    'PORTAL_MIRROR_ON',
+    'PORTAL_WAVE',
+    'WAVE_TUNNEL', 'WAVE_TUNNEL', 'WAVE_TUNNEL', 'PORTAL_GRAV_UP', 'WAVE_TUNNEL', 'PORTAL_GRAV_DOWN', 'WAVE_TUNNEL',
+    
+    // 3. Rychlá Gravity Ship s Orby
+    'PORTAL_SHIP',
+    'SHIP_ORB_TRAP', 'PORTAL_GRAV_UP', 'SHIP_SPIKE_GAP', 'PORTAL_GRAV_DOWN', 'SHIP_CORRIDOR_OF_DEATH',
+
+    // 4. Vypnutí zrcadla a klasický CUBE závěr
+    'PORTAL_MIRROR_OFF',
+    'PORTAL_CUBE',
+    'DOUBLE_SPIKE', 'CUBE_DEMON_TRAP', 'PORTAL_GRAV_UP', 'MIX_GRAVITY', 'MIX_GRAVITY', 'PORTAL_GRAV_DOWN', 'TRIPLE_SPIKE',
+
+    'PORTAL_END'
+];
+
+const LEVEL_MAP_5 = [
+    // Velmi lehký narozeninový začátek (Dorty a dárky)
+    'CAKE_BLOCK', 'CAKE_BLOCK', 'GIFT_GAP', 'CAKE_BLOCK', 
+    'BIRTHDAY_JUMP', 'CAKE_BLOCK',
+    
+    // Průběh s balónky
+    'PORTAL_SHIP',
+    'BALLOON_TUNNEL', 'BALLOON_TUNNEL',
+    
+    // Návrat k uvolněnému konci
+    'PORTAL_CUBE',
+    'BIRTHDAY_JUMP', 'GIFT_GAP', 'CAKE_BLOCK',
+    'PORTAL_END'
+];
+
 let ACTIVE_LEVEL_MAP = LEVEL_MAP_1;
 
 function spawnObstacle() {
@@ -190,6 +272,49 @@ function spawnObstacle() {
 
     let type = ACTIVE_LEVEL_MAP[state.spawnIndex];
     state.spawnIndex++;
+
+    if (type === 'PORTAL_END') {
+        obstacles.push({
+            type: 'PORTAL_END',
+            x: GAME_WIDTH,
+            y: 0,
+            width: 80,
+            height: GAME_HEIGHT,
+            color: '#10b981' // emerald finish line
+        });
+        return;
+    }
+
+    // --- NAROZENINOVÉ OBJEKTY ---
+    if (type === 'CAKE_BLOCK') {
+        obstacles.push({ type: 'CAKE', x: GAME_WIDTH, y: groundY - 40, width: 40, height: 40, color: '#fbcfe8', isPlatform: true });
+        state.spawnCooldown = 40;
+        return;
+    }
+    if (type === 'GIFT_GAP') {
+        obstacles.push({ type: 'GIFT', x: GAME_WIDTH, y: groundY - 40, width: 40, height: 40, color: '#fcd34d', isPlatform: true });
+        obstacles.push({ type: 'GIFT', x: GAME_WIDTH + 140, y: groundY - 40, width: 40, height: 40, color: '#34d399', isPlatform: true });
+        state.spawnCooldown = 60;
+        return;
+    }
+    if (type === 'BIRTHDAY_JUMP') {
+        obstacles.push({ type: 'PARTY_HAT', x: GAME_WIDTH, y: groundY - 30, width: 30, height: 30, color: '#c084fc' });
+        obstacles.push({ type: 'BALLOON', x: GAME_WIDTH + 100, y: groundY - 120, width: 35, height: 40, color: '#f43f5e', usedBy: new Set() });
+        state.spawnCooldown = 60;
+        return;
+    }
+    if (type === 'BALLOON_TUNNEL') {
+        obstacles.push({ type: 'BALLOON', x: GAME_WIDTH, y: 150, width: 35, height: 40, color: '#fbbf24', usedBy: new Set() });
+        obstacles.push({ type: 'BALLOON', x: GAME_WIDTH + 60, y: 220, width: 35, height: 40, color: '#60a5fa', usedBy: new Set() });
+        obstacles.push({ type: 'BALLOON', x: GAME_WIDTH + 120, y: 110, width: 35, height: 40, color: '#a78bfa', usedBy: new Set() });
+        
+        let sWidth = 30; let sHeight = 40;
+        obstacles.push({ type: 'PARTY_HAT', x: GAME_WIDTH + 60, y: groundY - sHeight, width: sWidth, height: sHeight, color: '#ec4899' });
+        obstacles.push({ type: 'PARTY_HAT_INV', x: GAME_WIDTH + 120, y: 50, width: sWidth, height: sHeight, color: '#ec4899' });
+        
+        state.spawnCooldown = 80;
+        return;
+    }
 
     if (type === 'PORTAL_END') {
         obstacles.push({
@@ -719,6 +844,34 @@ function spawnObstacle() {
         return;
     }
 
+    if (type === 'UFO_PAD_TRAP') {
+        let blockW = 40;
+        let gapHeight = 50; 
+
+        // Celistvý sloup od shora až dolů, vytvářející úzkou 1-block mezeru u země
+        obstacles.push({ type: 'BLOCK', x: GAME_WIDTH, y: 0, width: blockW, height: groundY - gapHeight, color: '#ec4899' });
+        
+        let padX = GAME_WIDTH + blockW + 5;
+        // Pad umístěný na zemi ihned po průletu mezerou
+        obstacles.push({ type: 'PAD', x: padX, y: groundY - 15, width: 40, height: 15, color: '#facc15', usedBy: new Set() });
+        
+        let orbX = padX + 110;
+        let orbY = groundY - 120;
+        // Červený Skákací Orb hned po odrazu (vystřelí vysoko nahoru)
+        obstacles.push({ type: 'RED_ORB', x: orbX, y: orbY, width: 30, height: 30, color: '#ef4444', usedBy: new Set() });
+
+        let colX = orbX + 130;
+        // Vysoká stěna, kterou bez kliknutí na Orb nepřeletíš (Pad jump sám o sobě nestačí, protože sloup je příliš vysoký)
+        obstacles.push({ type: 'BLOCK', x: colX, y: groundY - 220, width: blockW, height: 220, color: '#ec4899' });
+        
+        // Smrtící přední strana sloupu, abys o něj nescrapnul
+        obstacles.push({ type: 'SPIKE', x: colX - 10, y: groundY - 40, width: 30, height: 40, color: '#ef4444' });
+        obstacles.push({ type: 'SPIKE', x: colX - 10, y: groundY - 80, width: 30, height: 40, color: '#ef4444' });
+
+        state.spawnCooldown = 180;
+        return;
+    }
+
     if (type === 'WAVE_TUNNEL') {
         let gapSize = 150;
         // Vytvoř klikatý CikCak styl nahoru a dolů (pseudo-náhodně)
@@ -782,6 +935,13 @@ function spawnObstacle() {
         obstacles.push({ type: 'SPIKE', x: GAME_WIDTH, y: groundY - sHeight, width: sWidth, height: sHeight, color: '#ef4444' });
         obstacles.push({ type: 'SPIKE', x: GAME_WIDTH + sWidth, y: groundY - sHeight, width: sWidth, height: sHeight, color: '#ef4444' });
         obstacles.push({ type: 'SPIKE', x: GAME_WIDTH + sWidth * 2, y: groundY - sHeight, width: sWidth, height: sHeight, color: '#ef4444' });
+        state.spawnCooldown = Math.max(30, 90 - (state.gameSpeed * 5)) + 70; // extra gap to recover
+        return;
+    }
+
+    if (type === 'GAP') {
+        // Opravdu prázdné místo
+        state.spawnCooldown = Math.max(30, 90 - (state.gameSpeed * 5));
         return;
     }
 
@@ -800,6 +960,8 @@ function spawnObstacle() {
     if (type === 'PORTAL_WAVE') color = '#2dd4bf'; // teal portal
     if (type === 'PORTAL_GRAV_UP') color = '#facc15'; // yellow portal
     if (type === 'PORTAL_GRAV_DOWN') color = '#3b82f6'; // blue portal
+    if (type === 'PORTAL_MIRROR_ON') color = '#f97316'; // orange portal
+    if (type === 'PORTAL_MIRROR_OFF') color = '#06b6d4'; // cyan portal
 
     // Portal sits perfectly on the ground
     let yPos = groundY - height;
@@ -816,6 +978,14 @@ function spawnObstacle() {
     };
 
     obstacles.push(obstacle);
+
+    // Základní výpočet rozestupu pro obyčejné překážky, pokud typ neobsahoval vlastní návrat (return)
+    let baseCooldown = Math.max(30, 90 - (state.gameSpeed * 5));
+    if (type.includes('PORTAL')) {
+        state.spawnCooldown = baseCooldown * 1.5;
+    } else {
+        state.spawnCooldown = baseCooldown + Math.floor(Math.random() * 20);
+    }
 }
 
 // --- Game Logic functions --- //
@@ -849,8 +1019,7 @@ function saveCheckpoint() {
     // Malý vizuální efekt na hráči (bliknutí)
     player.color = '#fff';
     setTimeout(() => {
-        if (player.mode === 'SHIP') player.color = '#4ade80';
-        else player.color = '#4ade80';
+        player.color = unlockedColors[currentColorIndex];
     }, 100);
 }
 
@@ -869,7 +1038,7 @@ function removeLastCheckpoint() {
 
         // Malý vizuální efekt na hráči (červené bliknutí)
         player.color = '#ef4444';
-        setTimeout(() => { player.color = '#4ade80'; }, 100);
+        setTimeout(() => { player.color = unlockedColors[currentColorIndex]; }, 100);
     }
 }
 
@@ -893,7 +1062,7 @@ function loadLastCheckpoint() {
 
     // Flash obrazovky / hráče k označení respawnu
     player.color = '#eab308'; // žlutá
-    setTimeout(() => { player.color = '#4ade80'; }, 300);
+    setTimeout(() => { player.color = unlockedColors[currentColorIndex]; }, 300);
 
     state.lastRespawnTime = Date.now();
 }
@@ -908,225 +1077,270 @@ function update() {
 
     if (state.current !== 'PLAYING') return;
 
-    // Player physics
-    if (player.mode === 'CUBE') {
-        player.dy += gravity * player.gravityDir;
-        player.y += player.dy;
-
-        let onPlatform = false;
-
-        // Check platform collisions FIRST
-        for (let obs of obstacles) {
-            if (obs.isPlatform) {
-                // If moving down and bottom of player crosses top of platform
-                if (
-                    player.gravityDir === 1 &&
-                    player.dy >= 0 &&
-                    player.y + player.height >= obs.y &&
-                    player.y + player.height - player.dy <= obs.y + 15 &&
-                    player.x + player.width > obs.x &&
-                    player.x < obs.x + obs.width
-                ) {
-                    player.y = obs.y - player.height;
-                    player.dy = 0;
-                    player.grounded = true;
-                    onPlatform = true;
-                    player.rotation = Math.round(player.rotation / (Math.PI / 2)) * (Math.PI / 2);
-                }
-                // If moving up and top of player crosses bottom of platform
-                else if (
-                    player.gravityDir === -1 &&
-                    player.dy <= 0 &&
-                    player.y <= obs.y + obs.height &&
-                    player.y - player.dy >= obs.y + obs.height - 15 &&
-                    player.x + player.width > obs.x &&
-                    player.x < obs.x + obs.width
-                ) {
-                    player.y = obs.y + obs.height;
-                    player.dy = 0;
-                    player.grounded = true;
-                    onPlatform = true;
-                    player.rotation = Math.round(player.rotation / (Math.PI / 2)) * (Math.PI / 2);
-                }
-            }
+    state.frames++;
+    
+    // PERFEKTNÍ SYNCHRONIZACE: Hudba se hraje PŘESNĚ s updatem framů a generováním překážek!
+    if (chipPlaying || dogSongPlaying) {
+        if (state.frames >= nextNoteFrame) {
+            let n = currentChipNotes[currentNoteIndex];
+            let durationSec = (n.d * framesPerD) / 60.0;
+            playNote(n.f, currentChipType, Math.max(durationSec - 0.05, 0.1), currentChipVol);
+            
+            nextNoteFrame += n.d * framesPerD;
+            currentNoteIndex = (currentNoteIndex + 1) % currentChipNotes.length;
         }
-
-        let ceilingY = 50;
-        // Ground/ceiling collision for CUBE
-        if (player.gravityDir === 1) {
-            if (!onPlatform && player.y + player.height >= groundY) {
-                player.y = groundY - player.height;
-                player.dy = 0;
-                player.grounded = true;
-                player.rotation = Math.round(player.rotation / (Math.PI / 2)) * (Math.PI / 2);
-            } else if (!onPlatform) {
-                player.grounded = false;
-                player.rotation += 0.12;
-            }
-        } else {
-            // Inverted gravity collision
-            if (!onPlatform && player.y <= ceilingY) {
-                player.y = ceilingY;
-                player.dy = 0;
-                player.grounded = true;
-                player.rotation = Math.round(player.rotation / (Math.PI / 2)) * (Math.PI / 2);
-            } else if (!onPlatform) {
-                player.grounded = false;
-                player.rotation -= 0.12; // rotate opposite visually?
-            }
+    }
+    if (state.currentLevel === 5) {
+        if (state.frames % 5 === 0) {
+            confetti.push({
+                x: Math.random() * GAME_WIDTH,
+                y: -10,
+                dy: Math.random() * 2 + 1,
+                dx: (Math.random() - 0.5) * 2,
+                color: ['#f43f5e', '#facc15', '#a78bfa', '#34d399', '#60a5fa'][Math.floor(Math.random()*5)],
+                size: Math.random() * 6 + 4,
+                rot: Math.random() * Math.PI * 2,
+                rotSpeed: (Math.random() - 0.5) * 0.2
+            });
         }
-    } else if (player.mode === 'SHIP') {
-        if (player.isHolding) {
-            player.dy -= player.shipThrust * player.gravityDir;
-        } else {
-            player.dy += player.shipGravity * player.gravityDir;
+    }
+    
+    for (let c = 0; c < confetti.length; c++) {
+        confetti[c].y += confetti[c].dy;
+        confetti[c].x += confetti[c].dx;
+        confetti[c].rot += confetti[c].rotSpeed;
+        if (confetti[c].y > GAME_HEIGHT) {
+            confetti.splice(c, 1);
+            c--;
         }
-
-        // Clamp velocity (ale plynule brzdíme, pokud jsme vystřeleni orbem nad limit!)
-        let thrustLimit = 7;
-        if (player.dy > thrustLimit) {
-            player.dy -= 0.5; // plynulé zpomalení z rychlého pádu
-            if (player.dy < thrustLimit) player.dy = thrustLimit;
-        } else if (player.dy < -thrustLimit) {
-            player.dy += 0.5; // plynulé zpomalení z orbového výstřelu
-            if (player.dy > -thrustLimit) player.dy = -thrustLimit;
-        }
-
-        player.y += player.dy;
-        player.rotation = player.dy * 0.08 * player.gravityDir; // tilt ship based on vertical speed depending on gravity
-
-        let shipCeilingY = player.gravityDir === -1 ? 50 : 0;
-
-        // Ground and ceiling collision
-        if (player.y + player.height >= groundY) {
-            player.y = groundY - player.height;
-            player.dy = 0;
-        } else if (player.y <= shipCeilingY) {
-            player.y = shipCeilingY;
-            player.dy = 0;
-        }
-    } else if (player.mode === 'BALL') {
-        // Ball physics: drops up or down
-        player.dy += (gravity * 1.2) * player.gravityDir;
-        player.y += player.dy;
-
-        let ballCeilingY = 50;
-        let onPlatform = false;
-
-        // Check platform collisions FIRST
-        for (let obs of obstacles) {
-            if (obs.isPlatform) {
-                // If moving down and bottom of player crosses top of platform
-                if (
-                    player.gravityDir === 1 &&
-                    player.dy >= 0 &&
-                    player.y + player.height >= obs.y &&
-                    player.y + player.height - player.dy <= obs.y + 15 &&
-                    player.x + player.width > obs.x &&
-                    player.x < obs.x + obs.width
-                ) {
-                    player.y = obs.y - player.height;
-                    player.dy = 0;
-                    player.grounded = true;
-                    onPlatform = true;
-                }
-                // If moving up and top of player crosses bottom of platform
-                else if (
-                    player.gravityDir === -1 &&
-                    player.dy <= 0 &&
-                    player.y <= obs.y + obs.height &&
-                    player.y - player.dy >= obs.y + obs.height - 15 &&
-                    player.x + player.width > obs.x &&
-                    player.x < obs.x + obs.width
-                ) {
-                    player.y = obs.y + obs.height;
-                    player.dy = 0;
-                    player.grounded = true;
-                    onPlatform = true;
-                }
-            }
-        }
-
-        // Ground/ceiling collision
-        if (!onPlatform && player.y + player.height >= groundY) {
-            if (player.gravityDir === 1) {
-                player.y = groundY - player.height;
-                player.dy = 0;
-                player.grounded = true;
-            }
-        } else if (!onPlatform && player.y <= ballCeilingY) {
-            if (player.gravityDir === -1) {
-                player.y = ballCeilingY;
-                player.dy = 0;
-                player.grounded = true;
-            }
-        } else if (!onPlatform) {
-            player.grounded = false;
-        }
-
-        // Rolling rotation
-        if (player.grounded) {
-            player.rotation += (player.gravityDir === 1 ? 0.15 : -0.15);
-        } else {
-            player.rotation += (player.gravityDir === 1 ? 0.05 : -0.05);
-        }
-    } else if (player.mode === 'UFO') {
-        // UFO physics: drops down continuously, jumps on click
-        player.dy += (gravity * 0.8) * player.gravityDir;
-        if (player.dy > 8) player.dy = 8;
-        if (player.dy < -8) player.dy = -8;
-
-        player.y += player.dy;
-
-        let ufoCeilingY = player.gravityDir === -1 ? 50 : 0;
-
-        // Ground/ceiling collision
-        if (player.y + player.height >= groundY) {
-            player.y = groundY - player.height;
-            player.dy = 0;
-            player.grounded = true;
-        } else if (player.y <= ufoCeilingY) {
-            player.y = ufoCeilingY;
-            player.dy = 0;
-        } else {
-            player.grounded = false;
-        }
-
-        // UFO rotation (slight tilt based on vertical speed)
-        player.rotation = player.dy * 0.05 * player.gravityDir;
-    } else if (player.mode === 'WAVE') {
-        // Wave nemá gravitaci padání zrychlující časem, jde o konstantní šikmé směry.
-        // Snížená rychlost na žádost uživatele pro plavnější/méně ostré stoupání a klesání
-        let waveSpeed = state.gameSpeed * 0.85;
-
-        if (player.isHolding) {
-            player.dy = -waveSpeed * player.gravityDir; // letí šikmo mírněji nahoru
-        } else {
-            player.dy = waveSpeed * player.gravityDir; // letí šikmo mírněji dolů
-        }
-
-        player.y += player.dy;
-
-        let waveCeilingY = player.gravityDir === -1 ? 50 : 0;
-
-        // Zastavení o hrany - ve standardním GD často wave exploduje o strop a zem
-        // Zde si udržíme plynulost zastavením namísto smrti ke zjednodušení učebnice
-        if (player.y + player.height >= groundY) {
-            player.y = groundY - player.height;
-            player.dy = 0;
-            player.grounded = true;
-        } else if (player.y <= waveCeilingY) {
-            player.y = waveCeilingY;
-            player.dy = 0;
-        } else {
-            player.grounded = false;
-        }
-
-        // Značně vizuální rotace odpovídající přímo dráze šipky (cca 45°)
-        let targetRotation = player.dy < 0 ? -Math.PI / 4 : Math.PI / 4;
-        player.rotation += (targetRotation - player.rotation) * 0.3; // vyhlazování odrážení
     }
 
+    let activePlayers = [];
+    if (!player.dead) activePlayers.push(player);
+    if (state.isPVP && !player2.dead) activePlayers.push(player2);
+
+    for (let p of activePlayers) {
+        // Player physics
+        if (p.mode === 'CUBE') {
+            p.dy += gravity * p.gravityDir;
+            p.y += p.dy;
+    
+            let onPlatform = false;
+    
+            // Check platform collisions FIRST
+            for (let obs of obstacles) {
+                if (obs.isPlatform) {
+                    // If moving down and bottom of player crosses top of platform
+                    if (
+                        p.gravityDir === 1 &&
+                        p.dy >= 0 &&
+                        p.y + p.height >= obs.y &&
+                        p.y + p.height - p.dy <= obs.y + 15 &&
+                        p.x + p.width > obs.x &&
+                        p.x < obs.x + obs.width
+                    ) {
+                        p.y = obs.y - p.height;
+                        p.dy = 0;
+                        p.grounded = true;
+                        onPlatform = true;
+                        p.rotation = Math.round(p.rotation / (Math.PI / 2)) * (Math.PI / 2);
+                    }
+                    // If moving up and top of player crosses bottom of platform
+                    else if (
+                        p.gravityDir === -1 &&
+                        p.dy <= 0 &&
+                        p.y <= obs.y + obs.height &&
+                        p.y - p.dy >= obs.y + obs.height - 15 &&
+                        p.x + p.width > obs.x &&
+                        p.x < obs.x + obs.width
+                    ) {
+                        p.y = obs.y + obs.height;
+                        p.dy = 0;
+                        p.grounded = true;
+                        onPlatform = true;
+                        p.rotation = Math.round(p.rotation / (Math.PI / 2)) * (Math.PI / 2);
+                    }
+                }
+            }
+    
+            let ceilingY = 50;
+            // Ground/ceiling collision for CUBE
+            if (p.gravityDir === 1) {
+                if (!onPlatform && p.y + p.height >= groundY) {
+                    p.y = groundY - p.height;
+                    p.dy = 0;
+                    p.grounded = true;
+                    p.rotation = Math.round(p.rotation / (Math.PI / 2)) * (Math.PI / 2);
+                } else if (!onPlatform) {
+                    p.grounded = false;
+                    p.rotation += 0.12;
+                }
+            } else {
+                // Inverted gravity collision
+                if (!onPlatform && p.y <= ceilingY) {
+                    p.y = ceilingY;
+                    p.dy = 0;
+                    p.grounded = true;
+                    p.rotation = Math.round(p.rotation / (Math.PI / 2)) * (Math.PI / 2);
+                } else if (!onPlatform) {
+                    p.grounded = false;
+                    p.rotation -= 0.12; // rotate opposite visually?
+                }
+            }
+        } else if (p.mode === 'SHIP') {
+            if (p.isHolding) {
+                p.dy -= p.shipThrust * p.gravityDir;
+            } else {
+                p.dy += p.shipGravity * p.gravityDir;
+            }
+    
+            // Clamp velocity (ale plynule brzdíme, pokud jsme vystřeleni orbem nad limit!)
+            let thrustLimit = 7;
+            if (p.dy > thrustLimit) {
+                p.dy -= 0.5; // plynulé zpomalení z rychlého pádu
+                if (p.dy < thrustLimit) p.dy = thrustLimit;
+            } else if (p.dy < -thrustLimit) {
+                p.dy += 0.5; // plynulé zpomalení z orbového výstřelu
+                if (p.dy > -thrustLimit) p.dy = -thrustLimit;
+            }
+    
+            p.y += p.dy;
+            p.rotation = p.dy * 0.08 * p.gravityDir; // tilt ship based on vertical speed depending on gravity
+    
+            let shipCeilingY = p.gravityDir === -1 ? 50 : 0;
+    
+            // Ground and ceiling collision
+            if (p.y + p.height >= groundY) {
+                p.y = groundY - p.height;
+                p.dy = 0;
+            } else if (p.y <= shipCeilingY) {
+                p.y = shipCeilingY;
+                p.dy = 0;
+            }
+        } else if (p.mode === 'BALL') {
+            // Ball physics: drops up or down
+            p.dy += (gravity * 1.2) * p.gravityDir;
+            p.y += p.dy;
+    
+            let ballCeilingY = 50;
+            let onPlatform = false;
+    
+            // Check platform collisions FIRST
+            for (let obs of obstacles) {
+                if (obs.isPlatform) {
+                    // If moving down and bottom of player crosses top of platform
+                    if (
+                        p.gravityDir === 1 &&
+                        p.dy >= 0 &&
+                        p.y + p.height >= obs.y &&
+                        p.y + p.height - p.dy <= obs.y + 15 &&
+                        p.x + p.width > obs.x &&
+                        p.x < obs.x + obs.width
+                    ) {
+                        p.y = obs.y - p.height;
+                        p.dy = 0;
+                        p.grounded = true;
+                        onPlatform = true;
+                    }
+                    // If moving up and top of player crosses bottom of platform
+                    else if (
+                        p.gravityDir === -1 &&
+                        p.dy <= 0 &&
+                        p.y <= obs.y + obs.height &&
+                        p.y - p.dy >= obs.y + obs.height - 15 &&
+                        p.x + p.width > obs.x &&
+                        p.x < obs.x + obs.width
+                    ) {
+                        p.y = obs.y + obs.height;
+                        p.dy = 0;
+                        p.grounded = true;
+                        onPlatform = true;
+                    }
+                }
+            }
+    
+            // Ground/ceiling collision
+            if (!onPlatform && p.y + p.height >= groundY) {
+                if (p.gravityDir === 1) {
+                    p.y = groundY - p.height;
+                    p.dy = 0;
+                    p.grounded = true;
+                }
+            } else if (!onPlatform && p.y <= ballCeilingY) {
+                if (p.gravityDir === -1) {
+                    p.y = ballCeilingY;
+                    p.dy = 0;
+                    p.grounded = true;
+                }
+            } else if (!onPlatform) {
+                p.grounded = false;
+            }
+    
+            // Rolling rotation
+            if (p.grounded) {
+                p.rotation += (p.gravityDir === 1 ? 0.15 : -0.15);
+            } else {
+                p.rotation += (p.gravityDir === 1 ? 0.05 : -0.05);
+            }
+        } else if (p.mode === 'UFO') {
+            // UFO physics: drops down continuously, jumps on click
+            p.dy += (gravity * 0.8) * p.gravityDir;
+            if (p.dy > 15) p.dy = 15;
+            if (p.dy < -30) p.dy = -30;
+    
+            p.y += p.dy;
+    
+            let ufoCeilingY = p.gravityDir === -1 ? 50 : 0;
+    
+            // Ground/ceiling collision
+            if (p.y + p.height >= groundY) {
+                p.y = groundY - p.height;
+                p.dy = 0;
+                p.grounded = true;
+            } else if (p.y <= ufoCeilingY) {
+                p.y = ufoCeilingY;
+                p.dy = 0;
+            } else {
+                p.grounded = false;
+            }
+    
+            // UFO rotation (slight tilt based on vertical speed)
+            p.rotation = p.dy * 0.05 * p.gravityDir;
+        } else if (p.mode === 'WAVE') {
+            // Wave nemá gravitaci padání zrychlující časem, jde o konstantní šikmé směry.
+            // Snížená rychlost na žádost uživatele pro plavnější/méně ostré stoupání a klesání
+            let waveSpeed = state.gameSpeed * 0.85;
+    
+            if (p.isHolding) {
+                p.dy = -waveSpeed * p.gravityDir; // letí šikmo mírněji nahoru
+            } else {
+                p.dy = waveSpeed * p.gravityDir; // letí šikmo mírněji dolů
+            }
+    
+            p.y += p.dy;
+    
+            let waveCeilingY = p.gravityDir === -1 ? 50 : 0;
+    
+            // Zastavení o hrany - ve standardním GD často wave exploduje o strop a zem
+            // Zde si udržíme plynulost zastavením namísto smrti ke zjednodušení učebnice
+            if (p.y + p.height >= groundY) {
+                p.y = groundY - p.height;
+                p.dy = 0;
+                p.grounded = true;
+            } else if (p.y <= waveCeilingY) {
+                p.y = waveCeilingY;
+                p.dy = 0;
+            } else {
+                p.grounded = false;
+            }
+    
+            // Značně vizuální rotace odpovídající přímo dráze šipky (cca 45°)
+            let targetRotation = p.dy < 0 ? -Math.PI / 4 : Math.PI / 4;
+            p.rotation += (targetRotation - p.rotation) * 0.3; // vyhlazování odrážení
+        }
+    
+    
+    }
     state.frames++;
 
     // Obstacle logic
@@ -1151,85 +1365,93 @@ function update() {
         obs.x -= state.gameSpeed;
 
         // Custom collision detection (AABB with some tolerance)
-        let pPadX = 6; // Player padding
-        let pPadY = 6;
         let oPadX = 0; // Obstacle padding
         let oPadY = 0;
 
-        if (obs.type === 'SPIKE') {
-            oPadX = 10; // Zúží hitbox bodáku z boku
-            // Pro normální bodák (špička nahoře, základna dole):
-            // Posune vrchní hranu hitboxu níž (oPadY se přičte k obs.y)
-            oPadY = 16; 
-        } else if (obs.type === 'SPIKE_INV') {
+        if (obs.type === 'SPIKE' || obs.type === 'PARTY_HAT') {
             oPadX = 10;
-            // Pro obrácený bodák (špička dole, základna nahoře):
-            // Zde bychom ideálně potřebovali odříznout spodní část, ale pro zjednodušení
-            // AABB použijeme obecné zmenšení. 
+            oPadY = 16; 
+        } else if (obs.type === 'SPIKE_INV' || obs.type === 'PARTY_HAT_INV') {
+            oPadX = 10;
             oPadY = 16;
         }
 
-        if (
-            obs.type !== 'ORB' &&
-            obs.type !== 'DEATH_ORB' &&
-            obs.type !== 'CHECKPOINT_MARKER' &&
-            player.x + pPadX < obs.x + obs.width - oPadX &&
-            player.x + player.width - pPadX > obs.x + oPadX &&
-            // U SPIKE (base is bottom), top is obs.y -> my oPadY zkracujeme top hranu. 
-            // U SPIKE_INV (base is top), bottom is obs.y + obs.height. Zjednodušeně posunujeme obě hrany o trochu:
-            player.y + pPadY < obs.y + obs.height - (obs.type==='SPIKE'?0:oPadY) &&
-            player.y + player.height - pPadY > obs.y + (obs.type==='SPIKE_INV'?0:oPadY)
-        ) {
-            if (obs.type === 'PAD') {
-                // Auto boost jump heavily and mark used. Platí nyní pro všechny, nejen kostku.
-                if (!obs.used) {
-                    player.dy = -player.jumpForce * 1.4 * player.gravityDir; // super high jump
-                    player.grounded = false;
-                    obs.used = true;
-                    obs.color = '#ef4444'; // turns red to signify it has been used
-                }
-            } else {
-                // If it's a platform/block and we are ON it (or rolling under it depending on gravity), skip death
-                let isStandingOnIt = obs.isPlatform && player.grounded && (
-                    (player.gravityDir === 1 && Math.abs((player.y + player.height) - obs.y) < 2) ||
-                    (player.gravityDir === -1 && Math.abs(player.y - (obs.y + obs.height)) < 2)
-                );
+        for (let p of activePlayers) {
+            let pPadX = 6;
+            let pPadY = 6;
 
-                if (!isStandingOnIt) {
-                    if (obs.type === 'PORTAL_END') {
-                        levelComplete();
-                        return; // Stop updating after win
-                    } else if (obs.type.includes('PORTAL')) {
-                        // Change mode on portal hit
-                        if (obs.type === 'PORTAL_SHIP' && player.mode !== 'SHIP') {
-                            player.mode = 'SHIP';
-                            player.gravityDir = 1;
-                            player.y -= 10; // small bump to avoid clipping floor with ship nose
-                        } else if (obs.type === 'PORTAL_CUBE' && player.mode !== 'CUBE') {
-                            player.mode = 'CUBE';
-                            player.gravityDir = 1;
-                        } else if (obs.type === 'PORTAL_BALL' && player.mode !== 'BALL') {
-                            player.mode = 'BALL';
-                            player.gravityDir = 1;
-                        } else if (obs.type === 'PORTAL_UFO' && player.mode !== 'UFO') {
-                            player.mode = 'UFO';
-                            player.gravityDir = 1;
-                        } else if (obs.type === 'PORTAL_WAVE' && player.mode !== 'WAVE') {
-                            player.mode = 'WAVE';
-                            player.gravityDir = 1;
-                        } else if (obs.type === 'PORTAL_GRAV_UP') {
-                            player.gravityDir = -1;
-                        } else if (obs.type === 'PORTAL_GRAV_DOWN') {
-                            player.gravityDir = 1;
+            if (
+                obs.type !== 'ORB' &&
+                obs.type !== 'BALLOON' &&
+                obs.type !== 'BALLOON' &&
+                obs.type !== 'RED_ORB' &&
+                obs.type !== 'DEATH_ORB' &&
+                obs.type !== 'CHECKPOINT_MARKER' &&
+                p.x + pPadX < obs.x + obs.width - oPadX &&
+                p.x + p.width - pPadX > obs.x + oPadX &&
+                p.y + pPadY < obs.y + obs.height - (obs.type==='SPIKE'?0:oPadY) &&
+                p.y + p.height - pPadY > obs.y + (obs.type === 'SPIKE_INV' || obs.type === 'PARTY_HAT_INV'?0:oPadY)
+            ) {
+                if (obs.type === 'PAD') {
+                    if (!obs.usedBy || !obs.usedBy.has(p)) {
+                        p.dy = -p.jumpForce * 1.4 * p.gravityDir;
+                        p.grounded = false;
+                        obs.usedBy = obs.usedBy || new Set(); obs.usedBy.add(p);
+                        obs.color = '#ef4444';
+                    }
+                } else {
+                    let isStandingOnIt = obs.isPlatform && p.grounded && (
+                        (p.gravityDir === 1 && Math.abs((p.y + p.height) - obs.y) < 2) ||
+                        (p.gravityDir === -1 && Math.abs(p.y - (obs.y + obs.height)) < 2)
+                    );
+
+                    if (!isStandingOnIt) {
+                        if (obs.type === 'PORTAL_END') {
+                            levelComplete(p === player ? 1 : 2);
+                            return;
+                        } else if (obs.type.includes('PORTAL')) {
+                            if (obs.type === 'PORTAL_SHIP' && p.mode !== 'SHIP') {
+                                p.mode = 'SHIP';
+                                p.gravityDir = 1;
+                                p.y -= 10;
+                            } else if (obs.type === 'PORTAL_CUBE' && p.mode !== 'CUBE') {
+                                p.mode = 'CUBE';
+                                p.gravityDir = 1;
+                            } else if (obs.type === 'PORTAL_BALL' && p.mode !== 'BALL') {
+                                p.mode = 'BALL';
+                                p.gravityDir = 1;
+                            } else if (obs.type === 'PORTAL_UFO' && p.mode !== 'UFO') {
+                                p.mode = 'UFO';
+                                p.gravityDir = 1;
+                            } else if (obs.type === 'PORTAL_WAVE' && p.mode !== 'WAVE') {
+                                p.mode = 'WAVE';
+                                p.gravityDir = 1;
+                            } else if (obs.type === 'PORTAL_GRAV_UP') {
+                                p.gravityDir = -1;
+                            } else if (obs.type === 'PORTAL_GRAV_DOWN') {
+                                p.gravityDir = 1;
+                            } else if (obs.type === 'PORTAL_MIRROR_ON') {
+                                state.isMirrored = true;
+                            } else if (obs.type === 'PORTAL_MIRROR_OFF') {
+                                state.isMirrored = false;
+                            }
+                        } else {
+                            p.dead = true;
+                            // Pokud je PVP, vyhodnotime jestli umreli oba. Jika normalni gameOver.
+                            if (state.isPVP) {
+                                if (player.dead && player2.dead) {
+                                    gameOver();
+                                    return;
+                                }
+                            } else {
+                                gameOver();
+                                return;
+                            }
                         }
-                    } else {
-                        gameOver();
-                        return; // Stop updating after collision
                     }
                 }
             }
         }
-
         // Remove off-screen obstacles
         if (obs.x + obs.width < 0) {
             obstacles.splice(i, 1);
@@ -1259,6 +1481,20 @@ function draw() {
     // Clear canvas
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
+    if (state.currentLevel === 5) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; // Zvýšeno krytí pro lepší viditelnost
+        ctx.font = 'bold 65px "Arial Black", sans-serif'; // Trochu zmenšené, aby se celé krásně vešlo
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('HAPPY BIRTHDAY', GAME_WIDTH / 2, groundY / 2); // Vycentrováno přímo do herní plochy nahoře
+    }
+
+    ctx.save();
+    if (state.isMirrored) {
+        ctx.translate(GAME_WIDTH, 0);
+        ctx.scale(-1, 1);
+    }
+
     // Draw background/floor
     ctx.fillStyle = '#1e293b'; // slate color
     ctx.fillRect(0, groundY, GAME_WIDTH, groundHeight);
@@ -1286,166 +1522,175 @@ function draw() {
 
     ctx.shadowBlur = 0; // reset shadow just in case
 
-    // Draw player
-    ctx.save();
-    // Move to center of player to rotate properly
-    ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
-    ctx.rotate(player.rotation);
+    // Draw active players
+    let activePlayers = [];
+    if (!player.dead) activePlayers.push(player);
+    if (state.isPVP && !player2.dead) activePlayers.push(player2);
 
-    // Obrať vizualizaci modelů lodičky a ufo pro prevenci letu kabinkou dolů, když jsme přehození gravitací!
-    if (player.gravityDir === -1 && (player.mode === 'SHIP' || player.mode === 'UFO')) {
-        ctx.scale(1, -1);
-    }
-
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = player.color === '#111111' ? '#ef4444' : player.color; // Demon skin má červenou auru
-
-    if (player.mode === 'CUBE') {
-        ctx.fillStyle = player.color;
-        ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
-
-        // Inner box detail
-        ctx.fillStyle = '#0f172a';
-        ctx.shadowBlur = 0;
-        ctx.fillRect(-player.width / 4, -player.height / 4, player.width / 2, player.height / 2);
-
-        // Demon Ikonka
-        if (player.color === '#111111') {
-            ctx.fillStyle = '#ef4444'; // Red glowing eyes
-            ctx.shadowColor = '#ef4444';
-            ctx.shadowBlur = 10;
-            // Oči
-            ctx.fillRect(-10, -10, 6, 4);
-            ctx.fillRect(4, -10, 6, 4);
-            // Zuby/Úsměv
-            ctx.fillRect(-8, 2, 16, 3);
-            ctx.fillRect(-8, 5, 3, 3);
-            ctx.fillRect(5, 5, 3, 3);
-            
-            // Neonový rám
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(-player.width / 2, -player.height / 2, player.width, player.height);
+    for (let p of activePlayers) {
+        // Draw player
+        ctx.save();
+        // Move to center of p to rotate properly
+        ctx.translate(p.x + p.width / 2, p.y + p.height / 2);
+        ctx.rotate(p.rotation);
+    
+        // Obrať vizualizaci modelů lodičky a ufo pro prevenci letu kabinkou dolů, když jsme přehození gravitací!
+        if (p.gravityDir === -1 && (p.mode === 'SHIP' || p.mode === 'UFO')) {
+            ctx.scale(1, -1);
         }
-
-    } else if (player.mode === 'SHIP') {
-        // Draw ship shaped polygon
-        ctx.fillStyle = player.color;
-        ctx.beginPath();
-        ctx.moveTo(player.width / 2, 0); // nose
-        ctx.lineTo(-player.width / 2, player.height / 2); // bottom tail
-        ctx.lineTo(-player.width / 4, 0); // inner tail
-        ctx.lineTo(-player.width / 2, -player.height / 2); // top tail
-        ctx.closePath();
-        ctx.fill();
-
-        // If holding, draw flame
-        if (player.isHolding) {
-            ctx.fillStyle = '#ef4444'; // red flame
-            ctx.shadowColor = '#ef4444';
+    
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = p.color === '#111111' ? '#ef4444' : p.color; // Demon skin má červenou auru
+    
+        if (p.mode === 'CUBE') {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
+    
+            // Inner box detail
+            ctx.fillStyle = '#0f172a';
+            ctx.shadowBlur = 0;
+            ctx.fillRect(-p.width / 4, -p.height / 4, p.width / 2, p.height / 2);
+    
+            // Demon Ikonka
+            if (p.color === '#111111') {
+                ctx.fillStyle = '#ef4444'; // Red glowing eyes
+                ctx.shadowColor = '#ef4444';
+                ctx.shadowBlur = 10;
+                // Oči
+                ctx.fillRect(-10, -10, 6, 4);
+                ctx.fillRect(4, -10, 6, 4);
+                // Zuby/Úsměv
+                ctx.fillRect(-8, 2, 16, 3);
+                ctx.fillRect(-8, 5, 3, 3);
+                ctx.fillRect(5, 5, 3, 3);
+                
+                // Neonový rám
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(-p.width / 2, -p.height / 2, p.width, p.height);
+            }
+    
+        } else if (p.mode === 'SHIP') {
+            // Draw ship shaped polygon
+            ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.moveTo(-player.width / 2, -player.height / 4);
-            ctx.lineTo(-player.width, 0); // flame tip
-            ctx.lineTo(-player.width / 2, player.height / 4);
+            ctx.moveTo(p.width / 2, 0); // nose
+            ctx.lineTo(-p.width / 2, p.height / 2); // bottom tail
+            ctx.lineTo(-p.width / 4, 0); // inner tail
+            ctx.lineTo(-p.width / 2, -p.height / 2); // top tail
             ctx.closePath();
             ctx.fill();
-        }
-
-        if (player.color === '#111111') {
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.shadowColor = '#ef4444';
-            ctx.shadowBlur = 10;
-            ctx.stroke(); // Nakreslí červený okraj na lodi
-            // Oči
-            ctx.fillStyle = '#ef4444';
-            ctx.fillRect(-5, -6, 4, 3);
-            ctx.fillRect(8, -6, 4, 3);
-        }
-    } else if (player.mode === 'BALL') {
-        // Draw a circle for the ball
-        ctx.fillStyle = player.color;
-        ctx.beginPath();
-        ctx.arc(0, 0, player.width / 2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Inner detail so we can see it rotating
-        ctx.fillStyle = '#0f172a';
-        ctx.shadowBlur = 0;
-        ctx.beginPath();
-        ctx.arc(0, 0, player.width / 4, 0, Math.PI); // Half inner circle
-        ctx.fill();
-
-        // Add a line inside to make spin very obvious
-        ctx.strokeStyle = player.color === '#111111' ? '#ef4444' : '#0f172a';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(-player.width / 2, 0);
-        ctx.lineTo(player.width / 2, 0);
-        ctx.stroke();
-
-        if (player.color === '#111111') {
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
+    
+            // If holding, draw flame
+            if (p.isHolding) {
+                ctx.fillStyle = '#ef4444'; // red flame
+                ctx.shadowColor = '#ef4444';
+                ctx.beginPath();
+                ctx.moveTo(-p.width / 2, -p.height / 4);
+                ctx.lineTo(-p.width, 0); // flame tip
+                ctx.lineTo(-p.width / 2, p.height / 4);
+                ctx.closePath();
+                ctx.fill();
+            }
+    
+            if (p.color === '#111111') {
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.shadowColor = '#ef4444';
+                ctx.shadowBlur = 10;
+                ctx.stroke(); // Nakreslí červený okraj na lodi
+                // Oči
+                ctx.fillStyle = '#ef4444';
+                ctx.fillRect(-5, -6, 4, 3);
+                ctx.fillRect(8, -6, 4, 3);
+            }
+        } else if (p.mode === 'BALL') {
+            // Draw a circle for the ball
+            ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.arc(0, 0, player.width / 2, 0, Math.PI * 2);
-            ctx.shadowColor = '#ef4444';
-            ctx.shadowBlur = 10;
-            ctx.stroke(); // Červený okraj koule
-        }
-    } else if (player.mode === 'UFO') {
-        ctx.fillStyle = player.color;
-        // Draw saucer base (ellipse-like)
-        ctx.beginPath();
-        ctx.ellipse(0, 5, player.width / 2 + 5, player.height / 3, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw dome (glass)
-        ctx.fillStyle = '#38bdf8'; // light blue dome
-        ctx.beginPath();
-        ctx.arc(0, -player.height / 6, player.width / 2 - 5, Math.PI, 0); // half circle top
-        ctx.fill();
-
-        // Add outline to dome
-        ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    } else if (player.mode === 'WAVE') {
-        // Vykreslíme malý kompaktní trojúhelník - Šipku
-        ctx.fillStyle = player.color;
-
-        ctx.beginPath();
-        ctx.moveTo(player.width / 2 + 5, 0); // Ostrá špička dopředu (pravá strana)
-        ctx.lineTo(-player.width / 2 + 5, player.height / 2 - 5);  // Levý dolní roh
-        ctx.lineTo(-player.width / 4, 0);    // Vnitřní drobný výřez
-        ctx.lineTo(-player.width / 2 + 5, -player.height / 2 + 5); // Levý horní roh
-        ctx.closePath();
-        ctx.fill();
-
-        // Svítící linka na zadku šipky napodobující zážeh
-        ctx.strokeStyle = player.color === '#111111' ? '#ef4444' : '#2dd4bf'; // tyrkysová nebo červená
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(-player.width / 2 + 5, player.height / 2 - 5);
-        ctx.lineTo(-player.width / 4, 0);
-        ctx.lineTo(-player.width / 2 + 5, -player.height / 2 + 5);
-        ctx.stroke();
-        
-        if (player.color === '#111111') {
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.shadowColor = '#ef4444';
-            ctx.shadowBlur = 10;
+            ctx.arc(0, 0, p.width / 2, 0, Math.PI * 2);
+            ctx.fill();
+    
+            // Inner detail so we can see it rotating
+            ctx.fillStyle = '#0f172a';
+            ctx.shadowBlur = 0;
             ctx.beginPath();
-            ctx.moveTo(player.width / 2 + 5, 0);
-            ctx.lineTo(-player.width / 2 + 5, player.height / 2 - 5);
-            ctx.lineTo(-player.width / 2 + 5, -player.height / 2 + 5);
+            ctx.arc(0, 0, p.width / 4, 0, Math.PI); // Half inner circle
+            ctx.fill();
+    
+            // Add a line inside to make spin very obvious
+            ctx.strokeStyle = p.color === '#111111' ? '#ef4444' : '#0f172a';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(-p.width / 2, 0);
+            ctx.lineTo(p.width / 2, 0);
+            ctx.stroke();
+    
+            if (p.color === '#111111') {
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 0, p.width / 2, 0, Math.PI * 2);
+                ctx.shadowColor = '#ef4444';
+                ctx.shadowBlur = 10;
+                ctx.stroke(); // Červený okraj koule
+            }
+        } else if (p.mode === 'UFO') {
+            ctx.fillStyle = p.color;
+            // Draw saucer base (ellipse-like)
+            ctx.beginPath();
+            ctx.ellipse(0, 5, p.width / 2 + 5, p.height / 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+    
+            // Draw dome (glass)
+            ctx.fillStyle = '#38bdf8'; // light blue dome
+            ctx.beginPath();
+            ctx.arc(0, -p.height / 6, p.width / 2 - 5, Math.PI, 0); // half circle top
+            ctx.fill();
+    
+            // Add outline to dome
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        } else if (p.mode === 'WAVE') {
+            // Vykreslíme malý kompaktní trojúhelník - Šipku
+            ctx.fillStyle = p.color;
+    
+            ctx.beginPath();
+            ctx.moveTo(p.width / 2 + 5, 0); // Ostrá špička dopředu (pravá strana)
+            ctx.lineTo(-p.width / 2 + 5, p.height / 2 - 5);  // Levý dolní roh
+            ctx.lineTo(-p.width / 4, 0);    // Vnitřní drobný výřez
+            ctx.lineTo(-p.width / 2 + 5, -p.height / 2 + 5); // Levý horní roh
             ctx.closePath();
-            ctx.stroke(); // Červený obrys šipky
+            ctx.fill();
+    
+            // Svítící linka na zadku šipky napodobující zážeh
+            ctx.strokeStyle = p.color === '#111111' ? '#ef4444' : '#2dd4bf'; // tyrkysová nebo červená
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(-p.width / 2 + 5, p.height / 2 - 5);
+            ctx.lineTo(-p.width / 4, 0);
+            ctx.lineTo(-p.width / 2 + 5, -p.height / 2 + 5);
+            ctx.stroke();
+            
+            if (p.color === '#111111') {
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.shadowColor = '#ef4444';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(p.width / 2 + 5, 0);
+                ctx.lineTo(-p.width / 2 + 5, p.height / 2 - 5);
+                ctx.lineTo(-p.width / 2 + 5, -p.height / 2 + 5);
+                ctx.closePath();
+                ctx.stroke(); // Červený obrys šipky
+            }
         }
+    
+        ctx.restore();
+    
+    
     }
-
-    ctx.restore();
 
     // Draw obstacles
     for (let obs of obstacles) {
@@ -1453,7 +1698,7 @@ function draw() {
         ctx.shadowBlur = 15;
         ctx.shadowColor = obs.color;
 
-        if (obs.type === 'SPIKE') {
+        if (obs.type === 'SPIKE' || obs.type === 'PARTY_HAT') {
             ctx.beginPath();
             ctx.moveTo(obs.x + obs.width / 2, obs.y); // top tip
             ctx.lineTo(obs.x + obs.width, obs.y + obs.height); // bottom right
@@ -1465,7 +1710,7 @@ function draw() {
             ctx.strokeStyle = '#fca5a5';
             ctx.lineWidth = 2;
             ctx.stroke();
-        } else if (obs.type === 'SPIKE_INV') {
+        } else if (obs.type === 'SPIKE_INV' || obs.type === 'PARTY_HAT_INV') {
             ctx.beginPath();
             ctx.moveTo(obs.x + obs.width / 2, obs.y + obs.height); // bottom tip
             ctx.lineTo(obs.x + obs.width, obs.y); // top right
@@ -1477,6 +1722,61 @@ function draw() {
             ctx.strokeStyle = '#fca5a5';
             ctx.lineWidth = 2;
             ctx.stroke();
+        } else if (obs.type === 'CAKE' || obs.type === 'GIFT') {
+            ctx.fillStyle = obs.color;
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            
+            // Birthday decorations
+            if (obs.type === 'CAKE') {
+                ctx.fillStyle = '#fff'; // frosting
+                ctx.fillRect(obs.x, obs.y, obs.width, 10);
+                // Candle
+                ctx.fillStyle = '#fcd34d'; 
+                ctx.fillRect(obs.x + obs.width/2 - 2, obs.y - 12, 4, 12);
+                ctx.fillStyle = '#ef4444'; // flame
+                ctx.beginPath();
+                ctx.arc(obs.x + obs.width/2, obs.y - 14, 3, 0, Math.PI*2);
+                ctx.fill();
+            } else if (obs.type === 'GIFT') {
+                ctx.fillStyle = '#ef4444'; // ribbon
+                ctx.fillRect(obs.x + obs.width/2 - 4, obs.y, 8, obs.height);
+                ctx.fillRect(obs.x, obs.y + obs.height/2 - 4, obs.width, 8);
+                // Bow
+                ctx.beginPath(); ctx.arc(obs.x + obs.width/2 - 5, obs.y - 5, 5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(obs.x + obs.width/2 + 5, obs.y - 5, 5, 0, Math.PI*2); ctx.fill();
+            }
+        } else if (obs.type === 'PARTY_HAT' || obs.type === 'PARTY_HAT_INV') {
+            ctx.fillStyle = obs.color;
+            ctx.beginPath();
+            if (obs.type === 'PARTY_HAT') {
+                ctx.moveTo(obs.x, obs.y + obs.height);
+                ctx.lineTo(obs.x + obs.width / 2, obs.y);
+                ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+            } else {
+                ctx.moveTo(obs.x, obs.y);
+                ctx.lineTo(obs.x + obs.width / 2, obs.y + obs.height);
+                ctx.lineTo(obs.x + obs.width, obs.y);
+            }
+            ctx.fill();
+            // Pom-pom on top
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            if (obs.type === 'PARTY_HAT') ctx.arc(obs.x + obs.width/2, obs.y, 4, 0, Math.PI*2);
+            else ctx.arc(obs.x + obs.width/2, obs.y + obs.height, 4, 0, Math.PI*2);
+            ctx.fill();
+        } else if (obs.type === 'BALLOON') {
+            ctx.fillStyle = '#e2e8f0'; // string
+            ctx.fillRect(obs.x + obs.width/2 - 1, obs.y + obs.height/2, 2, 30);
+            
+            ctx.fillStyle = obs.color;
+            ctx.beginPath();
+            ctx.ellipse(obs.x + obs.width/2, obs.y + obs.height/2, obs.width/2, obs.height/2, 0, 0, Math.PI*2);
+            ctx.fill();
+            // Highlight
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            ctx.arc(obs.x + obs.width/2 - 5, obs.y + obs.height/2 - 8, 4, 0, Math.PI*2);
+            ctx.fill();
         } else if (obs.type === 'BLOCK') {
             // Block
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
@@ -1512,7 +1812,7 @@ function draw() {
             ctx.beginPath();
             ctx.arc(obs.x + obs.width / 2, obs.y + obs.height / 2, 100, 0, Math.PI * 2);
             ctx.stroke();
-        } else if (obs.type === 'ORB') {
+        } else if (obs.type === 'ORB' || obs.type === 'RED_ORB') {
             ctx.beginPath();
             ctx.arc(obs.x + obs.width / 2, obs.y + obs.height / 2, obs.width / 2, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -1585,11 +1885,29 @@ function draw() {
             ctx.translate(obs.x + obs.width / 2, obs.y + obs.height / 2);
             // rotate 90 deg down
             ctx.rotate(Math.PI / 2);
+            if (state.isMirrored) {
+                // Preklopime zpet text aby byl citelny
+                ctx.scale(1, -1);
+            }
             ctx.fillStyle = '#fff';
             ctx.font = '24px Orbitron';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText("FINISH", 0, 0);
+            ctx.restore();
+        }
+    }
+    
+    // Končíme celý draw(), tak jestli jsme mirrorovali scénu:
+    ctx.restore();
+    // Konfety
+    if (state.currentLevel === 5) {
+        for (let c of confetti) {
+            ctx.save();
+            ctx.translate(c.x, c.y);
+            ctx.rotate(c.rot);
+            ctx.fillStyle = c.color;
+            ctx.fillRect(-c.size/2, -c.size/2, c.size, c.size);
             ctx.restore();
         }
     }
@@ -1606,25 +1924,30 @@ function gameLoop() {
 function togglePause() {
     if (state.current === 'PLAYING') {
         state.current = 'PAUSED';
-        bgMusic.pause();
+        bgMusic.pause(); stopAllCustomAudio();
         pauseScreen.classList.add('active');
         pauseBtn.style.display = 'none';
+        if (restartHudBtn) restartHudBtn.style.display = 'none';
     } else if (state.current === 'PAUSED') {
         state.current = 'PLAYING';
         bgMusic.play();
         pauseScreen.classList.remove('active');
         pauseBtn.style.display = 'flex';
+        restartHudBtn.style.display = 'flex';
     }
 }
+
+
 
 function returnToMenu() {
     state.current = 'START';
     pauseScreen.classList.remove('active');
     gameOverScreen.classList.remove('active'); // OPRAVA: Skrytí Game Over obrazovky po stisknutí tlačítka Menu
     startScreen.classList.add('active');
-    bgMusic.pause();
+    bgMusic.pause(); stopAllCustomAudio();
     bgMusic.currentTime = 0;
     pauseBtn.style.display = 'none';
+    restartHudBtn.style.display = 'none';
 
     // Clear canvas basic view
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -1651,20 +1974,30 @@ function startGame(levelNumber) {
 
     if (state.currentLevel === 1) ACTIVE_LEVEL_MAP = LEVEL_MAP_1;
     else if (state.currentLevel === 2) ACTIVE_LEVEL_MAP = LEVEL_MAP_2;
-    else ACTIVE_LEVEL_MAP = LEVEL_MAP_3; // Demon level!
+    else if (state.currentLevel === 3) ACTIVE_LEVEL_MAP = LEVEL_MAP_3; // Demon level!
+    else if (state.currentLevel === 4) ACTIVE_LEVEL_MAP = LEVEL_MAP_4; // Insane level!
+    else ACTIVE_LEVEL_MAP = LEVEL_MAP_5; // Birthday!
 
     state.isPractice = practiceToggle.checked;
+    state.isPVP = typeof pvpToggle !== 'undefined' && pvpToggle ? pvpToggle.checked : false;
+
+    // PVP mode and Practice mode are mutually exclusive
+    if (state.isPVP) {
+        state.isPractice = false;
+        if(practiceToggle) practiceToggle.checked = false;
+    }
 
     // Načteme pokroky pro daný level z paměti
     if (!levelStats[state.currentLevel]) levelStats[state.currentLevel] = { hiScore: 0, attempts: 1 };
     state.hiScore = levelStats[state.currentLevel].hiScore;
     state.attempts = levelStats[state.currentLevel].attempts;
+    state.isMirrored = false;
 
     state.current = 'PLAYING';
     state.score = 0;
     state.frames = 0;
     state.levelSection = 'CUBE';
-    state.spawnCooldown = 0;
+    state.spawnCooldown = 60; // Nastaveno na 60, aby měl hráč sekundu času před první překážkou
     state.spawnIndex = 0;
     state.currentPercent = 0;
     scoreValEl.textContent = state.score;
@@ -1676,6 +2009,7 @@ function startGame(levelNumber) {
     gameOverScreen.classList.remove('active');
     pauseScreen.classList.remove('active');
     pauseBtn.style.display = 'flex';
+    restartHudBtn.style.display = 'flex';
 
     if (state.isPractice) {
         practiceUi.style.display = 'block';
@@ -1687,12 +2021,12 @@ function startGame(levelNumber) {
     const title = gameOverScreen.querySelector('h1');
     title.textContent = "Game Over";
     title.style.color = ""; // reset color
+    if (pvpResultEl) pvpResultEl.style.display = 'none';
 
     if (state.isVictory) {
         state.isVictory = false;
     }
 
-    // Reset player
     player.y = groundY - player.height;
     player.dy = 0;
     player.rotation = 0;
@@ -1700,6 +2034,20 @@ function startGame(levelNumber) {
     player.mode = 'CUBE';
     player.isHolding = false;
     player.gravityDir = 1; // RESET gravitace na stardardní směrem dolů
+    player.dead = false;
+
+    if (state.isPVP) {
+        player2.y = groundY - player2.height;
+        player2.dy = 0;
+        player2.rotation = 0;
+        player2.grounded = true;
+        player2.mode = 'CUBE';
+        player2.isHolding = false;
+        player2.gravityDir = 1;
+        player2.dead = false;
+    } else {
+        player2.dead = true;
+    }
 
     // Reset obstacles and speed
     obstacles = [];
@@ -1710,11 +2058,14 @@ function startGame(levelNumber) {
     // Play background music optionally
     bgMusic.currentTime = 0;
     if (state.isPractice) {
-        bgMusic.pause(); // V practice modu budeme potichu, aby to nerušilo, nebo můžete dodat custom loop
+        bgMusic.pause(); 
+        stopAllCustomAudio(); 
     } else {
-        let playPromise = bgMusic.play();
-        if (playPromise !== undefined) {
-            playPromise.catch(error => { console.log('Auto-play was prevented', error) });
+        bgMusic.pause();
+        if (state.currentLevel === 5) {
+            startDogSong();
+        } else {
+            startChiptuneSong(state.currentLevel);
         }
     }
 }
@@ -1757,7 +2108,8 @@ function gameOver() {
 
     gameOverScreen.classList.add('active');
     pauseBtn.style.display = 'none';
-    bgMusic.pause();
+    if (restartHudBtn) restartHudBtn.style.display = 'none';
+    bgMusic.pause(); stopAllCustomAudio();
 }
 
 function updateColorsStore() {
@@ -1782,7 +2134,7 @@ function updateColorsStore() {
     }
 }
 
-function levelComplete() {
+function levelComplete(winnerPlayerId = 1) {
     state.current = 'GAMEOVER';
     state.gameOverTime = Date.now();
     state.isVictory = true;
@@ -1800,7 +2152,15 @@ function levelComplete() {
     attemptCountEl.textContent = state.attempts;
 
     const title = gameOverScreen.querySelector('h1');
-    title.textContent = "LEVEL BEATEN!";
+    
+    if (state.isPVP && pvpResultEl) {
+        title.textContent = "KONEC ZÁVODU!";
+        pvpResultEl.textContent = "Hráč " + winnerPlayerId + " Vyhrál!";
+        pvpResultEl.style.color = winnerPlayerId === 1 ? player.color : player2.color;
+        pvpResultEl.style.display = 'block';
+    } else {
+        title.textContent = "LEVEL BEATEN!";
+    }
     title.style.color = "#4ade80"; // victory distinct green color
 
     if (rewardTextEl) rewardTextEl.style.display = 'none';
@@ -1824,13 +2184,13 @@ function levelComplete() {
 
     gameOverScreen.classList.add('active');
     pauseBtn.style.display = 'none';
-    bgMusic.pause();
+    if (restartHudBtn) restartHudBtn.style.display = 'none';
+    bgMusic.pause(); stopAllCustomAudio();
 }
 
-function handleInputDown() {
-    globalIsHolding = true;
+function handleInputDown(p = player) {
+    if (p === player) globalIsHolding = true;
     if (state.current === 'GAMEOVER') {
-        // Zabrani okamzitemu restartu pri zmacknuti klavesy zrovna ve chvili smrti ("death skip")
         if (Date.now() - state.gameOverTime > 500) {
             startGame(state.currentLevel);
         }
@@ -1841,38 +2201,42 @@ function handleInputDown() {
         return;
     }
 
-    if (state.current === 'PLAYING') {
-        player.isHolding = true;
-        // Handle jump for cube, ball, ufo, and now ship (orbs!)
-        if (player.mode === 'CUBE' || player.mode === 'BALL' || player.mode === 'UFO' || player.mode === 'SHIP') {
+    if (state.current === 'PLAYING' && !p.dead) {
+        p.isHolding = true;
+        if (p.mode === 'CUBE' || p.mode === 'BALL' || p.mode === 'UFO' || p.mode === 'SHIP' || p.mode === 'WAVE') {
             let orbHit = false;
-            // Check distance to any unused orb
             for (let obs of obstacles) {
-                if ((obs.type === 'ORB' || obs.type === 'DEATH_ORB') && !obs.used) {
-                    let px = player.x + player.width / 2;
-                    let py = player.y + player.height / 2;
+                if ((obs.type === 'ORB' || obs.type === 'RED_ORB' || obs.type === 'DEATH_ORB' || obs.type === 'BALLOON' || obs.type === 'BALLOON') && (!obs.usedBy || !obs.usedBy.has(p))) {
+                    let px = p.x + p.width / 2;
+                    let py = p.y + p.height / 2;
                     let ox = obs.x + obs.width / 2;
                     let oy = obs.y + obs.height / 2;
                     let dist = Math.hypot(px - ox, py - oy);
 
-                    if (dist < 100) { // Active radius defined by faint ring
+                    if (dist < 100) {
                         if (obs.type === 'DEATH_ORB') {
-                            obs.used = true;
-                            gameOver();
-                            return; // Stop jumping logic
+                            obs.usedBy = obs.usedBy || new Set(); obs.usedBy.add(p);
+                            p.dead = true;
+                            if (state.isPVP) {
+                                if (player.dead && player2.dead) gameOver();
+                            } else {
+                                gameOver();
+                            }
+                            return;
                         }
 
-                        if (player.mode === 'CUBE' || player.mode === 'UFO' || player.mode === 'SHIP') {
-                            // Ship dostane o trochu silnější kopanec přes orb, vypadá to efektně a pomůže přeletět stěnu
-                            let burst = player.mode === 'SHIP' ? 1.5 : 1;
-                            player.dy = (-player.jumpForce * burst) * player.gravityDir; // boost!
-                        } else if (player.mode === 'BALL') {
-                            player.gravityDir *= -1; // Ball flips gravity mid-air on orb hit!
-                            player.dy = 0;
+                        if (p.mode === 'CUBE' || p.mode === 'UFO' || p.mode === 'SHIP') {
+                            let burst = 1;
+                            if (p.mode === 'SHIP') burst = 1.5;
+                            if (obs.type === 'RED_ORB') burst = 2.4; // Gigantic super jump for Red Orb
+                            p.dy = (-p.jumpForce * burst) * p.gravityDir;
+                        } else if (p.mode === 'BALL') {
+                            p.gravityDir *= -1;
+                            p.dy = 0;
                         }
-                        player.grounded = false;
-                        obs.used = true;
-                        obs.color = '#4ade80'; // flash green to show used
+                        p.grounded = false;
+                        obs.usedBy = obs.usedBy || new Set(); obs.usedBy.add(p);
+                        obs.color = '#4ade80';
                         orbHit = true;
                         break;
                     }
@@ -1880,17 +2244,16 @@ function handleInputDown() {
             }
 
             if (!orbHit) {
-                if (player.mode === 'UFO') {
-                    player.dy = (-player.jumpForce * 0.8) * player.gravityDir; // Flappy bird jump
-                    player.grounded = false;
-                } else if (player.grounded) {
-                    if (player.mode === 'CUBE') {
-                        player.dy = (-player.jumpForce) * player.gravityDir;
-                        player.grounded = false;
-                    } else if (player.mode === 'BALL') {
-                        // Ball flip gravity only if we didn't hit an orb this frame
-                        player.gravityDir *= -1;
-                        player.grounded = false;
+                if (p.mode === 'UFO') {
+                    p.dy = (-p.jumpForce * 0.8) * p.gravityDir;
+                    p.grounded = false;
+                } else if (p.grounded) {
+                    if (p.mode === 'CUBE') {
+                        p.dy = (-p.jumpForce) * p.gravityDir;
+                        p.grounded = false;
+                    } else if (p.mode === 'BALL') {
+                        p.gravityDir *= -1;
+                        p.grounded = false;
                     }
                 }
             }
@@ -1898,9 +2261,9 @@ function handleInputDown() {
     }
 }
 
-function handleInputUp() {
-    globalIsHolding = false;
-    player.isHolding = false;
+function handleInputUp(p = player) {
+    if (p === player) globalIsHolding = false;
+    p.isHolding = false;
 }
 
 function bindEvents() {
@@ -1909,8 +2272,8 @@ function bindEvents() {
         // Dev Secret: Ctrl/Cmd + K unlocks everything
         if ((e.ctrlKey || e.metaKey) && e.code === 'KeyK') {
             e.preventDefault();
-            state.beatenLevels = { 1: true, 2: true, 3: true };
-            state.stars = 6;
+            state.beatenLevels = { 1: true, 2: true, 3: true, 4: true, 5: true };
+            state.stars = 15;
             localStorage.setItem('gd_stars', state.stars);
             localStorage.setItem('gd_beaten', JSON.stringify(state.beatenLevels));
             updateColorsStore();
@@ -1920,12 +2283,23 @@ function bindEvents() {
         }
 
         if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
-            e.preventDefault(); // Zabrání posouvání stránky
+            e.preventDefault();
+            if (e.repeat) return;
             if (state.current === 'START') {
-                startGame(state.currentLevel); // Start the currently selected/default level
+                startGame(state.currentLevel);
                 return;
             }
-            handleInputDown();
+            handleInputDown(player);
+        }
+        if (e.code === 'KeyW') {
+            if (state.isPVP) {
+                e.preventDefault();
+                if (e.repeat) return;
+                if (state.current === 'START') startGame(state.currentLevel);
+                else {
+                    handleInputDown(player2);
+                }
+            }
         }
         if (e.code === 'Escape' || e.code === 'KeyP') {
             togglePause();
@@ -1936,24 +2310,34 @@ function bindEvents() {
         if ((e.key === 'x' || e.key === 'X') && state.isPractice) {
             removeLastCheckpoint();
         }
+        if (e.code === 'Tab') {
+            e.preventDefault(); // Zabrání přepnutí focusu
+            if (state.current === 'PLAYING' || state.current === 'GAMEOVER' || state.current === 'PAUSED') {
+                startGame(state.currentLevel);
+            }
+        }
     });
     window.addEventListener('keyup', (e) => {
         if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
             e.preventDefault();
-            handleInputUp();
+            handleInputUp(player);
+        }
+        if (e.code === 'KeyW' && state.isPVP) {
+            e.preventDefault();
+            handleInputUp(player2);
         }
     });
 
     // Mouse/Touch listener on canvas
-    canvas.addEventListener('mousedown', handleInputDown);
-    canvas.addEventListener('mouseup', handleInputUp);
+    canvas.addEventListener('mousedown', () => handleInputDown(player));
+    canvas.addEventListener('mouseup', () => handleInputUp(player));
     canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault(); // prevent zoom etc
-        handleInputDown();
+        e.preventDefault();
+        handleInputDown(player);
     }, { passive: false });
     canvas.addEventListener('touchend', (e) => {
         e.preventDefault();
-        handleInputUp();
+        handleInputUp(player);
     }, { passive: false });
 
     // Restart button click
@@ -1972,6 +2356,18 @@ function bindEvents() {
         });
     }
 
+    if (restartHudBtn) {
+        restartHudBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Prevent immediate restart loop if died
+            if (state.current !== 'GAMEOVER' || Date.now() - state.gameOverTime > 500) {
+                startGame(state.currentLevel);
+            }
+        });
+    }
+
+
+
     // Pause buttons
     pauseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1982,6 +2378,15 @@ function bindEvents() {
         e.stopPropagation();
         togglePause();
     });
+
+    if (pauseRestartBtn) {
+        pauseRestartBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (state.current === 'PAUSED') {
+                startGame(state.currentLevel);
+            }
+        });
+    }
 
     menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1998,6 +2403,19 @@ function bindEvents() {
             startGame(selectedLevel);
         });
     });
+
+    if (hardResetBtn) {
+        hardResetBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm("Opravdu chceš smazat celý svůj postup (všechny odemčené skiny, hvězdy a statistiky pokusů)? Tato akce je nevratná.")) {
+                localStorage.removeItem('gd_stars');
+                localStorage.removeItem('gd_beaten');
+                localStorage.removeItem('gd_stats');
+                localStorage.removeItem('gd_color');
+                window.location.reload();
+            }
+        });
+    }
 
     // Practice UI Buttons
     addCpBtn.addEventListener('click', (e) => {
@@ -2023,3 +2441,110 @@ function bindEvents() {
 if (starCountEl) starCountEl.textContent = state.stars;
 updateColorsStore();
 init();
+
+// --- End of Audio ---
+let audioCtx = null;
+let dogSongPlaying = false;
+let chipPlaying = false;
+let currentChipNotes = [];
+let currentChipType = 'square';
+let currentChipVol = 0.5;
+let framesPerD = 20; 
+let nextNoteFrame = 0;
+let currentNoteIndex = 0;
+
+function stopChiptune() {
+    chipPlaying = false;
+}
+function stopDogSong() {
+    dogSongPlaying = false;
+}
+function stopAllCustomAudio() {
+    stopDogSong();
+    stopChiptune();
+}
+
+function playNote(freq, type, durationSec, vol) {
+    if (!audioCtx) return;
+    let time = audioCtx.currentTime;
+    let osc = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
+    let filter = audioCtx.createBiquadFilter();
+
+    if (type === 'dogbark') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, time);
+        // pro dog bark
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.4, time + 0.15);
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(5000, time);
+        filter.frequency.exponentialRampToValueAtTime(freq, time + 0.1);
+        
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(1.0, time + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+        
+        osc.connect(filter);
+        filter.connect(gain);
+    } else {
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, time);
+        
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(vol, time + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + durationSec);
+        osc.connect(gain);
+    }
+
+    gain.connect(audioCtx.destination);
+    osc.start(time);
+    osc.stop(time + durationSec + 0.1);
+}
+
+function startChiptuneSong(levelId) {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    stopAllCustomAudio();
+    chipPlaying = true;
+    
+    let tempo = 0.25; 
+    let notes = [];
+    let type = 'square';
+    let vol = 0.5;
+
+    if (levelId === 1) { 
+        type = 'square'; vol = 0.4; framesPerD = 20; // 0.33s per beat (multiple of 10)
+        notes = [{f: 261.63, d: 1}, {f: 261.63, d: 1}, {f: 392.00, d: 2}, {f: 349.23, d: 1}, {f: 329.63, d: 1}, {f: 293.66, d: 2}, {f: 261.63, d: 1}, {f: 329.63, d: 1}, {f: 392.00, d: 1}, {f: 440.00, d: 1}, {f: 392.00, d: 4}];
+    } else if (levelId === 2) { 
+        type = 'triangle'; vol = 0.8; framesPerD = 12; // originální tempo 0.2s per beat
+        notes = [{f: 329.63, d: 1}, {f: 440.00, d: 1}, {f: 329.63, d: 1}, {f: 440.00, d: 1}, {f: 392.00, d: 1}, {f: 293.66, d: 1}, {f: 392.00, d: 1}, {f: 293.66, d: 1}, {f: 261.63, d: 2}, {f: 329.63, d: 2}, {f: 392.00, d: 4}];
+    } else if (levelId === 3) { 
+        type = 'sawtooth'; vol = 0.3; framesPerD = 25; // 0.41s
+        notes = [{f: 130.81, d: 1}, {f: 146.83, d: 1}, {f: 155.56, d: 2}, {f: 130.81, d: 1}, {f: 146.83, d: 1}, {f: 185.00, d: 2}, {f: 130.81, d: 2}, {f: 155.56, d: 2}, {f: 110.00, d: 4}];
+    } else if (levelId === 4) { 
+        type = 'sawtooth'; vol = 0.2; framesPerD = 8; // 0.13s super fast arp
+        notes = [{f: 440, d: 1}, {f: 523.25, d: 1}, {f: 659.25, d: 1}, {f: 880, d: 1}, {f: 440, d: 1}, {f: 523.25, d: 1}, {f: 659.25, d: 1}, {f: 880, d: 1}, {f: 392, d: 1}, {f: 493.88, d: 1}, {f: 587.33, d: 1}, {f: 783.99, d: 1}, {f: 392, d: 1}, {f: 493.88, d: 1}, {f: 587.33, d: 1}, {f: 783.99, d: 1}];
+    } else { // Fallback pro jistotu (neznámý level, aby to nespadlo)
+        type = 'square'; vol = 0.4; framesPerD = 20;
+        notes = [{f: 261.63, d: 1}, {f: 261.63, d: 1}, {f: 392.00, d: 4}];
+    }
+    
+    currentChipNotes = notes; currentChipType = type; currentChipVol = vol;
+    currentNoteIndex = 0; nextNoteFrame = state.frames; // synchronizace od aktuálního framu!
+}
+
+function startDogSong() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    stopAllCustomAudio();
+    dogSongPlaying = true;
+    
+    currentChipNotes = [
+        {f: 392.00, d: 1}, {f: 392.00, d: 1}, {f: 440.00, d: 2}, {f: 392.00, d: 2}, {f: 523.25, d: 2}, {f: 493.88, d: 4},
+        {f: 392.00, d: 1}, {f: 392.00, d: 1}, {f: 440.00, d: 2}, {f: 392.00, d: 2}, {f: 587.33, d: 2}, {f: 523.25, d: 4},
+        {f: 392.00, d: 1}, {f: 392.00, d: 1}, {f: 783.99, d: 2}, {f: 659.25, d: 2}, {f: 523.25, d: 2}, {f: 493.88, d: 2}, {f: 440.00, d: 3},
+        {f: 698.46, d: 1}, {f: 698.46, d: 1}, {f: 659.25, d: 2}, {f: 523.25, d: 2}, {f: 587.33, d: 2}, {f: 523.25, d: 4}
+    ];
+    currentChipType = 'dogbark';
+    currentChipVol = 1.0;
+    framesPerD = 12; // about 0.2 sec
+    currentNoteIndex = 0; nextNoteFrame = state.frames;
+}
